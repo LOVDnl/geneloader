@@ -294,7 +294,7 @@ if (is_readable($_CONFIG['user']['transcript_list'])) {
 // In case it already exists, check if we need to download it again.
 if (!file_exists($_CONFIG['hgnc_file']) || in_array($_CONFIG['user']['update_hgnc'], array('y', 'yes'))) {
     // Construct link.
-    $sURL = $_CONFIG['hgnc_base_url'] . '?' . $_CONFIG['hgnc_col_var_name'] . '=' . implode('&' . $_CONFIG['hgnc_col_var_name'] . '=', $_CONFIG['hgnc_columns']) . '&' . $_CONFIG['hgnc_other_vars'];
+    $sURL = $_CONFIG['hgnc_base_url'] . '?' . $_CONFIG['hgnc_col_var_name'] . '=' . implode('&' . $_CONFIG['hgnc_col_var_name'] . '=', array_keys($_CONFIG['hgnc_columns'])) . '&' . $_CONFIG['hgnc_other_vars'];
     $f = fopen($_CONFIG['hgnc_file'], 'w');
     if ($f === false) {
         die('  Could not create new HGNC data file.' . "\n");
@@ -307,11 +307,26 @@ if (!file_exists($_CONFIG['hgnc_file']) || in_array($_CONFIG['user']['update_hgn
     if (!fputs($f, $sHGNCData)) {
         die('  Could not write to HGNC data file.' . "\n");
     }
-    print('OK!' . "\n\n");
+    print('OK!' . "\n");
 }
-// WORK IN PROGRESS. Download doesn't seem to be working anymore.
+print("\n");
 
 
 
 // Find LOVD installation, run it's inc-init.php to get DB connection, initiate $_SETT, etc.
+define('ROOT_PATH', $_CONFIG['user']['lovd_path'] . '/');
+define('FORMAT_ALLOW_TEXTPLAIN', true);
+$_GET['format'] = 'text/plain';
+// To prevent notices when running inc-init.php.
+$_SERVER = array_merge($_SERVER, array(
+    'HTTP_HOST' => 'localhost',
+    'REQUEST_URI' => '/',
+    'QUERY_STRING' => '',
+    'REQUEST_METHOD' => 'GET',
+));
+// How do I kill PHP warnings coming from inc-init.php?
+// If I put a require here, I can't nicely handle errors, because PHP will die if something is wrong.
+error_reporting(0);
+ini_set('display_errors', 0);
+require ROOT_PATH . 'inc-init.php';
 ?>
