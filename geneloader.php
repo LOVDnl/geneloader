@@ -43,6 +43,10 @@ if (isset($_SERVER['HTTP_HOST'])) {
 
 $_CONFIG = array(
     'version' => '0.1',
+    'hgnc_file' => 'HGNC_download.txt',
+    'hgnc_base_url' => 'http://www.genenames.org/cgi-bin/download',
+    'hgnc_col_var_name' => 'col',
+    'hgnc_other_vars' => 'status=Approved&status_opt=2&where=&order_by=gd_app_sym_sort&format=text&limit=&hgnc_dbtag=on&submit=submit',
     // We ignore genes from the following locus groups:
     'bad_locus_groups' => array(
         'phenotype', // No transcripts.
@@ -62,6 +66,7 @@ $_CONFIG = array(
     'user' => array(
         // Variables we will be asking the user.
         'lovd_path' => '',
+        'update_hgnc' => 'n',
         'gene_list' => 'all',
         'transcript_list' => 'best',
     ),
@@ -72,7 +77,7 @@ $_CONFIG = array(
         'gd_locus_type' => 'Locus Type',
         'gd_locus_group' => 'Locus Group',
         'gd_pub_chrom_map' => 'Chromosome',
-        'gd_pub_eg_id' => 'Entrez Gene ID', // Curated by the HGNC.
+        'gd_pub_eg_id' => 'Entrez Gene ID', // Curated by the HGNC, not the other one.
         'gd_pub_refseq_ids' => 'RefSeq IDs', // Curated by the HGNC.
         'md_mim_id' => 'OMIM ID(supplied by OMIM)',
         'md_refseq_id' => 'RefSeq(supplied by NCBI)', // Downloaded from external sources.
@@ -223,7 +228,10 @@ set_time_limit(0);
 print('Gene Loader v' . $_CONFIG['version'] . '.' . "\n");
 
 // Verify settings with user.
-lovd_verifySettings('lovd_path', 'Path of LOVD installation to load data into', 'lovd_path', '');
+if (!lovd_verifySettings('lovd_path', 'Path of LOVD installation to load data into', 'lovd_path', '')) {
+    die('  Failed to get LOVD path.' . "\n");
+}
+lovd_verifySettings('update_hgnc', 'Download new HGNC data if file already available? (Yes/No)', 'array', array('yes', 'no', 'y', 'n'));
 lovd_verifySettings('gene_list', 'File containing the gene symbols that you want created,
     or just press enter to create all genes', 'file', '');
 lovd_verifySettings('transcript_list', 'File containing the transcripts that you want created,
@@ -236,11 +244,74 @@ lovd_verifySettings('transcript_list', 'File containing the transcripts that you
 
 // Check gene and transcript files and file formats.
 $aGenesToCreate = $aTranscriptsToCreate = array();
-// STUB.
 
-// Download HGNC data first. In case the user has given a gene list,
-// we might not be able to send the full query to the HGNC,
-// so better just download the whole thing and loop through it.
+// Gene list.
+if (is_readable($_CONFIG['user']['gene_list'])) {
+    // Gene list argument is a file.
+    $aFile = file($_CONFIG['user']['gene_list']);
+    // Loop through the file to check it.
+    foreach ($aFile as $nLine => $sLine) {
+        $sLine = trim($sLine);
+        if (!$sLine || $sLine{0} == '#') {
+            continue;
+        }
+        if (!preg_match('/^[A-Z][A-Za-z0-9_@-]+$/', $sLine)) {
+            $nLine ++;
+            die('  Can not read gene list file on line ' . $nLine . ', not a valid gene symbol format.' . "\n");
+        }
+        $aGenesToCreate[] = $sLine;
+    }
+    print('  Read ' . count($aGenesToCreate) . ' genes to create.' . "\n");
+}
+
+// Transcript list.
+if (is_readable($_CONFIG['user']['transcript_list'])) {
+    // Gene list argument is a file.
+    $aFile = file($_CONFIG['user']['transcript_list']);
+    // Loop through the file to check it.
+    foreach ($aFile as $nLine => $sLine) {
+        $sLine = trim($sLine);
+        if (!$sLine || $sLine{0} == '#') {
+            continue;
+        }
+        if (!preg_match('/^[NX][MR]_[0-9]{6,9}(\.[0-9]+)?$/', $sLine)) {
+            $nLine ++;
+            die('  Can not read transcript list file on line ' . $nLine . ', not a valid transcript format.' . "\n");
+        }
+        @list($sIDWithoutVersion, $nVersion) = explode('.', $sLine); // Version is not mandatory.
+        if (!isset($aTranscriptsToCreate[$sIDWithoutVersion])) {
+            $aTranscriptsToCreate[$sIDWithoutVersion] = array();
+        }
+        $aTranscriptsToCreate[$sIDWithoutVersion][] = $nVersion;
+    }
+    print('  Read ' . count($aTranscriptsToCreate) . ' transcripts to create.' . "\n");
+}
+
+
+
+// Download HGNC data first. We might not be able to send the full query to the HGNC,
+//  so better just download the whole thing and loop through it.
+// In case it already exists, check if we need to download it again.
+if (!file_exists($_CONFIG['hgnc_file']) || in_array($_CONFIG['user']['update_hgnc'], array('y', 'yes'))) {
+    // Construct link.
+    $sURL = $_CONFIG['hgnc_base_url'] . '?' . $_CONFIG['hgnc_col_var_name'] . '=' . implode('&' . $_CONFIG['hgnc_col_var_name'] . '=', $_CONFIG['hgnc_columns']) . '&' . $_CONFIG['hgnc_other_vars'];
+    $f = fopen($_CONFIG['hgnc_file'], 'w');
+    if ($f === false) {
+        die('  Could not create new HGNC data file.' . "\n");
+    }
+    print('  Downloading HGNC data...');
+    $sHGNCData = @file_get_contents($sURL);
+    if (!$sHGNCData) {
+        die('  Could not download HGNC data. URL used:' . "\n  " . $sURL . "\n");
+    }
+    if (!fputs($f, $sHGNCData)) {
+        die('  Could not write to HGNC data file.' . "\n");
+    }
+    print('OK!' . "\n\n");
+}
+// WORK IN PROGRESS. Download doesn't seem to be working anymore.
+
+
 
 // Find LOVD installation, run it's inc-init.php to get DB connection, initiate $_SETT, etc.
 ?>
