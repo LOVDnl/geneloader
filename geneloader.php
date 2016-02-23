@@ -6,7 +6,7 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-02-22
+ * Modified    : 2016-02-23
  * Version     : 0.1
  * For LOVD    : 3.0-15
  *
@@ -336,6 +336,7 @@ $_SERVER = array_merge($_SERVER, array(
 ini_set('display_errors', '0');
 ini_set('log_errors', '0'); // CLI logs errors to the screen, apparently.
 require ROOT_PATH . 'inc-init.php';
+require ROOT_PATH . 'inc-lib-genes.php'; // For lovd_getUDForGene().
 
 
 
@@ -369,7 +370,7 @@ if (count($aHGNCColumns) < count($_CONFIG['hgnc_columns'])) {
       or redownload the file.' . "\n");
 } else {
     print('OK!
-    Retrieving additional resources... ');
+  Retrieving additional resources... ');
     unset($aHGNCFile[0]);
 }
 $nHGNCGenes = count($aHGNCFile);
@@ -394,7 +395,7 @@ if (!count($aLRGs) || !count($aNGs)) {
     Could not retrieve LRG and NG resources.' . "\n");
 } else {
     print('OK!
-    Resources stored, loading ignore list... ');
+  Resources stored, loading ignore list... ');
 }
 
 // See if we can file genes to ignore.
@@ -418,10 +419,10 @@ if (file_exists($_CONFIG['user']['genes_to_ignore'])) {
             }
             $aGenesToIgnore[$sLine] = 1; // Using genes as keys speeds up the lookup process a lot.
         }
-        print('OK!');
+        print('OK!' . "\n");
     }
 } else {
-    print('None exists yet.');
+    print('None exists yet.' . "\n");
 }
 print('  Preparing gene ignore list for appending... ');
 $fGenesToIgnore = fopen($_CONFIG['user']['genes_to_ignore'], 'a');
@@ -430,7 +431,7 @@ if ($fGenesToIgnore === false) {
     Could not append to file, please check its permissions.' . "\n");
 } else {
     print('OK!
-  Starting the run...' . "\n");
+  Starting the run...' . "\n\n");
 }
 
 // Append header to $fGenesToIgnore, if empty.
@@ -444,8 +445,166 @@ if ($bGenesToIgnoreIsEmpty) {
 
 
 
+// We're going to track some times, to see how much time we're spending using web resources.
+$aGenesInLOVD = $_DB->query('SELECT id, refseq_UD FROM ' . TABLE_GENES)->fetchAllCombine();
+$aTranscriptsInLOVD = $_DB->query('SELECT SUBSTRING_INDEX(id_ncbi, ".", 1), 1 FROM ' . TABLE_TRANSCRIPTS)->fetchAllCombine();
+$tStart = microtime(true);
+$nGenes = 0;
+$nTimeSpentGettingUDs = 0;
+$nUDsRequested = 0;
+$nTimeSpentGettingTranscripts = 0;
+$nTranscriptsRequested = 0;
 
 
 
+// Loop through the data and write to the database when needed.
+$nGenesPerDot = 10;
+$nDotsPerLine = 50;
+foreach ($aHGNCFile as $nLine => $sLine) {
+    // Write some statistics now and then, while we're waiting.
+    // This is put on top of the loop, so that any continue calls used
+    // below don't stop the script from making output now and then).
+    if ($nGenes) {
+        if (!($nGenes % $nGenesPerDot)) {
+            print('.');
+            flush();
+        }
+        if (!($nGenes % ($nGenesPerDot * $nDotsPerLine))) {
+            $nTimeSpent = microtime(true) - $tStart;
+            $nTimeLeft = ($nHGNCGenes * $nTimeSpent / $nGenes) - $nTimeSpent;
+            print("\n" .
+                date('c') . "\n" .
+                'Completed ' . $nGenes . ' genes (' . round(100 * $nGenes / $nHGNCGenes) . '%) in ' . round($nTimeSpent, 1) . ' seconds (' . round($nTimeSpent/$nGenes, 2) . 's/gene); ETC is ' . round($nTimeLeft) . 's (' . date('c', ($nTimeLeft+time())) . ').' . "\n" .
+                '    Requested ' . $nUDsRequested . ' UDs' . (!$nUDsRequested? '' : ', taking ' . round($nTimeSpentGettingUDs, 1) . ' seconds (' . round($nTimeSpentGettingUDs/$nUDsRequested, 2) . 's/UD)') . "\n" .
+                '    Requested transcript info for ' . $nTranscriptsRequested . ' UDs' . (!$nTranscriptsRequested? '' : ', taking ' . round($nTimeSpentGettingTranscripts, 1) . ' seconds (' . round($nTimeSpentGettingTranscripts/$nTranscriptsRequested, 2) . 's/UD)') . "\n");
+        }
+    }
+    $nGenes ++;
+    $aLineExplode = explode("\t", $sLine);
+    $aLine = array();
+    foreach ($aHGNCColumns as $nKey => $sName) {
+        $aLine[$sName] = $aLineExplode[$nKey];
+    }
+
+    // Parse the HGNG's transcripts.
+    $aTranscriptsFromHGNC = array();
+    // Currently HGVS is splitting on ' ,', but this is more flexible.
+    $aTranscripts = preg_split('/\s?[,;]\s?/', $aLine['gd_pub_refseq_ids']);
+    // Add the RefSeq provided by the HGNC that they got from somewhere else.
+    // Could also be NGs etc, but never more than one.
+    $aTranscripts[] = $aLine['md_refseq_id'];
+    foreach ($aTranscripts as $sTranscriptID) {
+        // HGNC doesn't often use versions in the transcripts they have stored, but sometimes they do.
+        // We're currently ignoring any version number given by HGNC.
+        $sIDWithoutVersion = preg_replace('/\.\d+$/', '', $sTranscriptID);
+        $aTranscriptsFromHGNC[] = $sIDWithoutVersion;
+    }
+
+    // We'll silently ignore this gene in the following cases:
+    // If the gene was specifically set to be ignored,
+    // If we are using a gene list, and the gene is not in there,
+    // If we already have the gene, we only want the best transcript, and we already have it.
+    if (isset($aGenesToIgnore[$aLine['gd_app_sym']]) ||
+        ($aGenesToCreate && !isset($aGenesToCreate[$aLine['gd_app_sym']])) ||
+        (isset($aGenesInLOVD[$aLine['gd_app_sym']]) && $_CONFIG['user']['transcript_list'] == 'best' &&
+            isset($aTranscriptsInLOVD[$aTranscriptsFromHGNC[0]]))) {
+        continue;
+    }
+
+    // By default, handle all the genes. If this is set to true, the gene will be added to our ignore list.
+    $bIgnoreGene = false;
+
+    // Ignore genes from the bad locus groups.
+    if (in_array($aLine['gd_locus_group'], $_CONFIG['bad_locus_groups'])) {
+        $bIgnoreGene = true;
+    }
+    // Ignore genes from the bad locus types.
+    if (in_array($aLine['gd_locus_type'], $_CONFIG['bad_locus_types'])) {
+        $bIgnoreGene = true;
+    }
+
+    // Prepare fields.... HGNC ID.
+    $aLine['gd_hgnc_id'] = str_replace('HGNC:', '', $aLine['gd_hgnc_id']);
+    // Chromosome fields.
+    if ($aLine['gd_pub_chrom_map'] == 'mitochondria') {
+        $sChromosome = 'M';
+        $sChromBand = '';
+    } elseif (preg_match('/^(\d{1,2}|[XY])(.*)$/', $aLine['gd_pub_chrom_map'], $aMatches)) {
+        $sChromosome = $aMatches[1];
+        $sChromBand = $aMatches[2];
+    } else {
+        // Silently ignore genes on weird chromosomes.
+        continue;
+    }
+
+    // Genomic RefSeq...
+    if (isset($aLRGs[$aLine['gd_app_sym']])) {
+        $sRefseqGenomic = $aLRGs[$aLine['gd_app_sym']];
+    } elseif (isset($aNGs[$aLine['gd_app_sym']])) {
+        $sRefseqGenomic = $aNGs[$aLine['gd_app_sym']];
+    } else {
+        $sRefseqGenomic = $_SETT['human_builds'][$_CONFIG['refseq_build']]['ncbi_sequences'][$sChromosome];
+    }
+
+    // UD... But we won't request it, if we already have it!
+    if (isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
+        $sRefSeqUD = $aGenesInLOVD[$aLine['gd_app_sym']];
+    } else {
+        $sRefSeqUD = ''; // Gene not seen before, try and fetch.
+    }
+
+    if (!$bIgnoreGene && !$sRefSeqUD) {
+        $t = microtime(true);
+        $sRefSeqUD = lovd_getUDForGene($_CONF['refseq_build'], $aLine['gd_app_sym']);
+        $nTimeSpentGettingUDs += (microtime(true) - $t);
+        $nUDsRequested ++;
+    }
+
+
+
+    // Now load transcripts and see what we've got.
+    $aTranscriptsInUD = array();
+    if ($sRefSeqUD) {
+        $t = microtime(true);
+        $sJSONResponse = @implode('', file(str_replace('/services', '', $_CONF['mutalyzer_soap_url']) . '/json/getTranscriptsAndInfo?genomicReference=' . $sRefSeqUD . '&geneName=' . $aLine['gd_app_sym']));
+        $nTimeSpentGettingTranscripts += (microtime(true) - $t);
+        $nTranscriptsRequested++;
+        if ($sJSONResponse && $aResponse = json_decode($sJSONResponse, true)) {
+            $aAvailableTranscripts = $aResponse;
+
+            foreach ($aAvailableTranscripts as $aAvailableTranscript) {
+                if ($aAvailableTranscript['id']) { // Is this check needed? Copied from genes.php.
+                    list($sIDWithoutVersion, $nVersion) = explode('.', $aAvailableTranscript['id']);
+                    // We create a nested array like this, because possibly, we'll see two versions of one transcript.
+
+                    $aTranscriptsInUD[$sIDWithoutVersion][$nVersion] =
+                        array(
+                            'geneid' => $aLine['gd_app_sym'],
+                            'name' => str_replace($aLine['gd_app_name'] . ', ', '', $aAvailableTranscript['product']),
+                            'id_mutalyzer' => str_replace($aLine['gd_app_sym'] . '_v', '', $aAvailableTranscript['name']),
+                            'id_ncbi' => $aAvailableTranscript['id'],
+                            'id_protein_ncbi' => $aAvailableTranscript['proteinTranscript']['id'],
+                            'position_c_mrna_start' => $aAvailableTranscript['cTransStart'],
+                            'position_c_mrna_end' => $aAvailableTranscript['sortableTransEnd'],
+                            'position_c_cds_end' => $aAvailableTranscript['cCDSStop'],
+                            'position_g_mrna_start' => $aAvailableTranscript['chromTransStart'],
+                            'position_g_mrna_end' => $aAvailableTranscript['chromTransEnd'],
+                        );
+                }
+            }
+        }
+    }
+
+    // Now, if we don't have transcripts from the UD, we either didn't have a UD or we failed to get the transcripts.
+    // Either way, we'll block the gene from further processing.
+    if (!$aTranscriptsInUD) {
+        // If we hadn't written a date in the genes to ignore list, then we'll do it now.
+        if (!$bWroteToGenesFile) {
+            $bWroteToGenesFile = fputs($fGenesToIgnore, '# Genes ignored on ' . date('Y-m-d') . "\n");
+        }
+        fputs($fGenesToIgnore, $aLine['gd_app_sym'] . "\n");
+        continue;
+    }
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+}
 ?>
