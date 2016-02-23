@@ -479,7 +479,13 @@ $nTranscriptsCreated = 0;
 
 
 // Loop through the data and write to the database when needed.
-$nGenesPerDot = 10;
+$nGenesPerDot = 2;
+if ($aGenesToCreate) {
+    // The user requested a list of genes. Then we'll probably skip
+    // through a lot of genes, so we'll increase $nGenesPerDot.
+    $nPercentage = count($aGenesToCreate) / count($aHGNCFile);
+    $nGenesPerDot = round($nGenesPerDot/$nPercentage);
+}
 $nDotsPerLine = 50;
 foreach ($aHGNCFile as $nLine => $sLine) {
     // Write some statistics now and then, while we're waiting.
@@ -571,7 +577,7 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     } elseif (isset($aNGs[$aLine['gd_app_sym']])) {
         $aGene['refseq_genomic'] = $aNGs[$aLine['gd_app_sym']];
     } else {
-        $aGene['refseq_genomic'] = $_SETT['human_builds'][$_CONFIG['refseq_build']]['ncbi_sequences'][$aGene['chromosome']];
+        $aGene['refseq_genomic'] = $_SETT['human_builds'][$_CONF['refseq_build']]['ncbi_sequences'][$aGene['chromosome']];
     }
 
     // UD... But we won't request it, if we already have it!
@@ -611,7 +617,8 @@ foreach ($aHGNCFile as $nLine => $sLine) {
                             'name' => str_replace($aLine['gd_app_name'] . ', ', '', $aAvailableTranscript['product']),
                             'id_mutalyzer' => str_replace($aLine['gd_app_sym'] . '_v', '', $aAvailableTranscript['name']),
                             'id_ncbi' => $aAvailableTranscript['id'],
-                            'id_protein_ncbi' => $aAvailableTranscript['proteinTranscript']['id'],
+                            // This is NULL sometimes, which crashes the insertion of the transcript.
+                            'id_protein_ncbi' => (!$aAvailableTranscript['proteinTranscript']['id']? '' : $aAvailableTranscript['proteinTranscript']['id']),
                             'position_c_mrna_start' => $aAvailableTranscript['cTransStart'],
                             'position_c_mrna_end' => $aAvailableTranscript['sortableTransEnd'],
                             'position_c_cds_end' => $aAvailableTranscript['cCDSStop'],
