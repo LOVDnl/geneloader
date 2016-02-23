@@ -46,7 +46,7 @@ $_CONFIG = array(
     'hgnc_file' => 'HGNC_download.txt',
     'hgnc_base_url' => 'http://www.genenames.org/cgi-bin/download',
     'hgnc_col_var_name' => 'col',
-    'hgnc_other_vars' => 'status=Approved&status_opt=2&where=&order_by=gd_app_sym_sort&format=text&limit=&hgnc_dbtag=on&submit=submit',
+    'hgnc_other_vars' => 'status=Approved&status_opt=2&where=&order_by=gd_app_sym_sort&format=text&limit=&submit=submit',
     // We ignore genes from the following locus groups:
     'bad_locus_groups' => array(
         'phenotype', // No transcripts.
@@ -84,18 +84,19 @@ $_CONFIG = array(
         'md_refseq_id' => 'RefSeq(supplied by NCBI)', // Downloaded from external sources.
     ),
     'lovd_gene_columns' => array(
-        'id',
-        'name',
-        'chromosome',
-        'chrom_band',
-        'refseq_genomic',
-        'refseq_UD',
-        'id_hgnc',
-        'id_entrez',
-        'id_omim',
+        'id' => 'gd_app_sym',
+        'name' => 'gd_app_name',
+        'chromosome' => '',     // Will be filled in later.
+        'chrom_band' => '',     // Will be filled in later.
+        'refseq_genomic' => '', // Will be filled in later.
+        'refseq_UD' => '',      // Will be filled in later.
+        'id_hgnc' => 'gd_hgnc_id',
+        'id_entrez' => 'gd_pub_eg_id',
+        'id_omim' => 'md_mim_id',
+        'created_by' => '',     // Will be filled in later.
+        'created_date' => '',   // Will be filled in later.
     ),
     'lovd_transcript_columns' => array(
-        'id',
         'geneid',
         'name',
         'id_mutalyzer',
@@ -106,6 +107,8 @@ $_CONFIG = array(
         'position_c_cds_end',
         'position_g_mrna_start',
         'position_g_mrna_end',
+        'created_by',
+        'created_date',
     ),
 );
 
@@ -326,7 +329,7 @@ $_GET['format'] = 'text/plain';
 // To prevent notices when running inc-init.php.
 $_SERVER = array_merge($_SERVER, array(
     'HTTP_HOST' => 'localhost',
-    'REQUEST_URI' => '/',
+    'REQUEST_URI' => '/' . basename(__FILE__),
     'QUERY_STRING' => '',
     'REQUEST_METHOD' => 'GET',
 ));
@@ -336,7 +339,8 @@ $_SERVER = array_merge($_SERVER, array(
 ini_set('display_errors', '0');
 ini_set('log_errors', '0'); // CLI logs errors to the screen, apparently.
 require ROOT_PATH . 'inc-init.php';
-require ROOT_PATH . 'inc-lib-genes.php'; // For lovd_getUDForGene().
+require ROOT_PATH . 'inc-lib-genes.php';   // For lovd_getUDForGene().
+require ROOT_PATH . 'inc-lib-actions.php'; // For lovd_addAllDefaultCustomColumns().
 
 
 
@@ -445,15 +449,32 @@ if ($bGenesToIgnoreIsEmpty) {
 
 
 
-// We're going to track some times, to see how much time we're spending using web resources.
+// Prepare for running queries.
 $aGenesInLOVD = $_DB->query('SELECT id, refseq_UD FROM ' . TABLE_GENES)->fetchAllCombine();
-$aTranscriptsInLOVD = $_DB->query('SELECT SUBSTRING_INDEX(id_ncbi, ".", 1), 1 FROM ' . TABLE_TRANSCRIPTS)->fetchAllCombine();
+$sSQL = 'INSERT INTO ' . TABLE_GENES . ' (';
+foreach (array_keys($_CONFIG['lovd_gene_columns']) as $nKey => $sField) {
+    $sSQL .= (!$nKey? '' : ', ') . '`' . $sField . '`';
+}
+$sSQL .= ') VALUES (?' . str_repeat(', ?', count($_CONFIG['lovd_gene_columns']) - 1) . ')';
+$qGenes = $_DB->prepare($sSQL);
+
+$aTranscriptsInLOVD = $_DB->query('SELECT SUBSTRING_INDEX(id_ncbi, ".", 1) AS IDWithoutVersion, GROUP_CONCAT(RIGHT(id_ncbi, LENGTH(id_ncbi) - LOCATE(".", id_ncbi)) SEPARATOR ";") AS versions FROM ' . TABLE_TRANSCRIPTS . ' GROUP BY IDWithoutVersion')->fetchAllCombine();
+$sSQL = 'INSERT INTO ' . TABLE_TRANSCRIPTS . ' (';
+foreach ($_CONFIG['lovd_transcript_columns'] as $nKey => $sField) {
+    $sSQL .= (!$nKey? '' : ', ') . '`' . $sField . '`';
+}
+$sSQL .= ') VALUES (?' . str_repeat(', ?', count($_CONFIG['lovd_transcript_columns']) - 1) . ')';
+$qTranscripts = $_DB->prepare($sSQL);
+
+// We're going to track some times, to see how much time we're spending using web resources.
 $tStart = microtime(true);
 $nGenes = 0;
 $nTimeSpentGettingUDs = 0;
 $nUDsRequested = 0;
 $nTimeSpentGettingTranscripts = 0;
 $nTranscriptsRequested = 0;
+$nGenesCreated = 0;
+$nTranscriptsCreated = 0;
 
 
 
@@ -476,23 +497,32 @@ foreach ($aHGNCFile as $nLine => $sLine) {
                 date('c') . "\n" .
                 'Completed ' . $nGenes . ' genes (' . round(100 * $nGenes / $nHGNCGenes) . '%) in ' . round($nTimeSpent, 1) . ' seconds (' . round($nTimeSpent/$nGenes, 2) . 's/gene); ETC is ' . round($nTimeLeft) . 's (' . date('c', ($nTimeLeft+time())) . ').' . "\n" .
                 '    Requested ' . $nUDsRequested . ' UDs' . (!$nUDsRequested? '' : ', taking ' . round($nTimeSpentGettingUDs, 1) . ' seconds (' . round($nTimeSpentGettingUDs/$nUDsRequested, 2) . 's/UD)') . "\n" .
-                '    Requested transcript info for ' . $nTranscriptsRequested . ' UDs' . (!$nTranscriptsRequested? '' : ', taking ' . round($nTimeSpentGettingTranscripts, 1) . ' seconds (' . round($nTimeSpentGettingTranscripts/$nTranscriptsRequested, 2) . 's/UD)') . "\n");
+                '    Requested transcript info for ' . $nTranscriptsRequested . ' UDs' . (!$nTranscriptsRequested? '' : ', taking ' . round($nTimeSpentGettingTranscripts, 1) . ' seconds (' . round($nTimeSpentGettingTranscripts/$nTranscriptsRequested, 2) . 's/UD)') . "\n" .
+                '    Created ' . $nGenesCreated . ' gene' . ($nGenes == 1? '' : 's') . ' and ' . $nTranscriptsCreated . ' transcript' . ($nTranscriptsCreated == 1? '' : 's') . "\n");
         }
     }
     $nGenes ++;
     $aLineExplode = explode("\t", $sLine);
     $aLine = array();
+    // The order in which the $aGene variables are stored, is important for the query that is run.
+    // So we initialize the array with the same template that has fed the prepare().
+    $aGene = array_combine(array_keys($_CONFIG['lovd_gene_columns']), array_fill(0, count($_CONFIG['lovd_gene_columns']), ''));
     foreach ($aHGNCColumns as $nKey => $sName) {
         $aLine[$sName] = $aLineExplode[$nKey];
     }
 
     // Parse the HGNG's transcripts.
+    $aTranscripts = array();
     $aTranscriptsFromHGNC = array();
     // Currently HGVS is splitting on ' ,', but this is more flexible.
-    $aTranscripts = preg_split('/\s?[,;]\s?/', $aLine['gd_pub_refseq_ids']);
+    if ($aLine['gd_pub_refseq_ids']) {
+        $aTranscripts = preg_split('/\s?[,;]\s?/', $aLine['gd_pub_refseq_ids']);
+    }
     // Add the RefSeq provided by the HGNC that they got from somewhere else.
     // Could also be NGs etc, but never more than one.
-    $aTranscripts[] = $aLine['md_refseq_id'];
+    if ($aLine['md_refseq_id']) {
+        $aTranscripts[] = $aLine['md_refseq_id'];
+    }
     foreach ($aTranscripts as $sTranscriptID) {
         // HGNC doesn't often use versions in the transcripts they have stored, but sometimes they do.
         // We're currently ignoring any version number given by HGNC.
@@ -503,7 +533,7 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     // We'll silently ignore this gene in the following cases:
     // If the gene was specifically set to be ignored,
     // If we are using a gene list, and the gene is not in there,
-    // If we already have the gene, we only want the best transcript, and we already have it.
+    // If we already have the gene, we only want the best transcript, and we already have it (ignoring version).
     if (isset($aGenesToIgnore[$aLine['gd_app_sym']]) ||
         ($aGenesToCreate && !isset($aGenesToCreate[$aLine['gd_app_sym']])) ||
         (isset($aGenesInLOVD[$aLine['gd_app_sym']]) && $_CONFIG['user']['transcript_list'] == 'best' &&
@@ -523,14 +553,12 @@ foreach ($aHGNCFile as $nLine => $sLine) {
         $bIgnoreGene = true;
     }
 
-    // Prepare fields.... HGNC ID.
-    $aLine['gd_hgnc_id'] = str_replace('HGNC:', '', $aLine['gd_hgnc_id']);
-    // Chromosome fields.
+    // Prepare chromosome fields.
     if ($aLine['gd_pub_chrom_map'] == 'mitochondria') {
-        $sChromosome = 'M';
+        $aGene['chromosome'] = 'M';
         $sChromBand = '';
     } elseif (preg_match('/^(\d{1,2}|[XY])(.*)$/', $aLine['gd_pub_chrom_map'], $aMatches)) {
-        $sChromosome = $aMatches[1];
+        $aGene['chromosome'] = $aMatches[1];
         $sChromBand = $aMatches[2];
     } else {
         // Silently ignore genes on weird chromosomes.
@@ -539,23 +567,23 @@ foreach ($aHGNCFile as $nLine => $sLine) {
 
     // Genomic RefSeq...
     if (isset($aLRGs[$aLine['gd_app_sym']])) {
-        $sRefseqGenomic = $aLRGs[$aLine['gd_app_sym']];
+        $aGene['refseq_genomic'] = $aLRGs[$aLine['gd_app_sym']];
     } elseif (isset($aNGs[$aLine['gd_app_sym']])) {
-        $sRefseqGenomic = $aNGs[$aLine['gd_app_sym']];
+        $aGene['refseq_genomic'] = $aNGs[$aLine['gd_app_sym']];
     } else {
-        $sRefseqGenomic = $_SETT['human_builds'][$_CONFIG['refseq_build']]['ncbi_sequences'][$sChromosome];
+        $aGene['refseq_genomic'] = $_SETT['human_builds'][$_CONFIG['refseq_build']]['ncbi_sequences'][$aGene['chromosome']];
     }
 
     // UD... But we won't request it, if we already have it!
     if (isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
-        $sRefSeqUD = $aGenesInLOVD[$aLine['gd_app_sym']];
+        $aGene['refseq_UD'] = $aGenesInLOVD[$aLine['gd_app_sym']];
     } else {
-        $sRefSeqUD = ''; // Gene not seen before, try and fetch.
+        $aGene['refseq_UD'] = ''; // Gene not seen before, try and fetch.
     }
 
-    if (!$bIgnoreGene && !$sRefSeqUD) {
+    if (!$bIgnoreGene && !$aGene['refseq_UD']) {
         $t = microtime(true);
-        $sRefSeqUD = lovd_getUDForGene($_CONF['refseq_build'], $aLine['gd_app_sym']);
+        $aGene['refseq_UD'] = lovd_getUDForGene($_CONF['refseq_build'], $aLine['gd_app_sym']);
         $nTimeSpentGettingUDs += (microtime(true) - $t);
         $nUDsRequested ++;
     }
@@ -564,9 +592,9 @@ foreach ($aHGNCFile as $nLine => $sLine) {
 
     // Now load transcripts and see what we've got.
     $aTranscriptsInUD = array();
-    if ($sRefSeqUD) {
+    if ($aGene['refseq_UD']) {
         $t = microtime(true);
-        $sJSONResponse = @implode('', file(str_replace('/services', '', $_CONF['mutalyzer_soap_url']) . '/json/getTranscriptsAndInfo?genomicReference=' . $sRefSeqUD . '&geneName=' . $aLine['gd_app_sym']));
+        $sJSONResponse = @implode('', file(str_replace('/services', '', $_CONF['mutalyzer_soap_url']) . '/json/getTranscriptsAndInfo?genomicReference=' . $aGene['refseq_UD'] . '&geneName=' . $aLine['gd_app_sym']));
         $nTimeSpentGettingTranscripts += (microtime(true) - $t);
         $nTranscriptsRequested++;
         if ($sJSONResponse && $aResponse = json_decode($sJSONResponse, true)) {
@@ -600,11 +628,149 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     if (!$aTranscriptsInUD) {
         // If we hadn't written a date in the genes to ignore list, then we'll do it now.
         if (!$bWroteToGenesFile) {
-            $bWroteToGenesFile = fputs($fGenesToIgnore, '# Genes ignored on ' . date('Y-m-d') . "\n");
+            $bWroteToGenesFile = fputs($fGenesToIgnore, '# Genes ignored on ' . date('Y-m-d') . "\r\n");
         }
-        fputs($fGenesToIgnore, $aLine['gd_app_sym'] . "\n");
+        fputs($fGenesToIgnore, $aLine['gd_app_sym'] . "\r\n");
         continue;
     }
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+    // Now, if needed, create the gene in the database.
+    if (!isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
+        // Copy the values from the HGNC data to $aGenes.
+        foreach ($_CONFIG['lovd_gene_columns'] as $sCol => $sHGNCCol) {
+            if ($sHGNCCol) {
+                $aGene[$sCol] = $aLine[$sHGNCCol];
+            }
+        }
+        $aGene['created_by'] = 0;
+        // Because there is significant time between creating two entries, I prefer to run date() again.
+        $aGene['created_date'] = date('Y-m-d H:i:s');
+        $qGenes->execute(array_values($aGene));
+        $nGenesCreated ++;
+
+        // Also, activate the standard custom columns!!!
+        lovd_addAllDefaultCustomColumns('gene', $aLine['gd_app_sym'], '0');
+    }
+
+
+
+    // Now go and find which transcripts to create.
+    $aTranscriptsForLOVD = array();
+    if (count($aTranscriptsInUD)) {
+        // Now we must make a choice based on the transcripts we found.
+        // By limiting ourselves to transcripts found in the UD we automatically filter the transcripts;
+        // HGNC suggests NC, NG, NM, NP, NR, XM, XR, NT and YP RefSeqs.
+
+        if ($aTranscriptsToCreate) {
+            // A file is being used with transcripts to create.
+            foreach ($aTranscriptsInUD as $sIDWithoutVersion => $aVersions) {
+                // If it's in our list, with or without matching version, create.
+                if (isset($aTranscriptsToCreate[$sIDWithoutVersion])) {
+                    // NMs requested should usually just have one version, but well...
+                    foreach ($aTranscriptsToCreate[$sIDWithoutVersion] as $nVersion) {
+                        if (isset($aVersions[$nVersion])) {
+                            $aTranscriptsForLOVD[] = $aVersions[$nVersion];
+                        }
+                    }
+                    if (!$aTranscriptsForLOVD) {
+                        // That didn't work, either because no specific version was requested, or because of
+                        // a mismatch in versions. Simply get newest version from the UD.
+                        $nMaxVersion = max(array_keys($aVersions));
+                        $aTranscriptsForLOVD[] = $aVersions[$nMaxVersion];
+                    }
+                }
+            }
+
+        } elseif ($_CONFIG['user']['transcript_list'] == 'all') {
+            // The user requested to have them all.
+            foreach ($aTranscriptsInUD as $sIDWithoutVersion => $aVersions) {
+                $aTranscriptsForLOVD = array_merge($aTranscriptsForLOVD, $aVersions);
+            }
+
+        } else {
+            // User wanted the best option. We'll try the transcript(s) provided by the HGNC.
+            // If they didn't provide any or if those transcripts are not in the UD,
+            // we'll ask the gene's default LOVD installation to see which one they use.
+            // That takes quite some time, but if it's what's requested, so be it...
+            foreach ($aTranscriptsFromHGNC as $sIDWithoutVersion) {
+                if (isset($aTranscriptsInUD[$sIDWithoutVersion])) {
+                    // We might have different versions here in this array. Pick the highest one.
+                    $nMaxVersion = max(array_keys($aTranscriptsInUD[$sIDWithoutVersion]));
+                    $aTranscriptsForLOVD[] = $aTranscriptsInUD[$sIDWithoutVersion][$nMaxVersion];
+                    // Done, stop searching for transcripts.
+                    break;
+                }
+            }
+
+            if (!$aTranscriptsForLOVD) {
+                // Fallback; HGNC doesn't supply a transcript. As a fallback, see if there is a
+                // reference LOVD for this gene, and see what transcript they use.
+                // This does slow down the process quite a bit, so perhaps we need to make a setting out of it.
+                // Suppress error messages, because LOVD.nl will return a 404 Not Found for genes not in the list.
+                $aLOVDURL = @lovd_php_file('http://www.lovd.nl/' . $aLine['gd_app_sym'] . '?getURL');
+                if ($aLOVDURL) {
+                    // Now call the API, and see about the transcript info.
+                    $aGeneInfo = @lovd_php_file($aLOVDURL[0] . 'api/rest.php/genes/' . $aLine['gd_app_sym']);
+                    if ($aGeneInfo && is_array($aGeneInfo)) {
+                        foreach ($aGeneInfo as $sLine) {
+                            if (preg_match('/refseq_mrna[\s]*:[\s]*([\S]+)\.([\S]+)/', $sLine, $aMatches)) {
+                                list(,$sIDWithoutVersion, $nVersion) = $aMatches;
+                                if (isset($aTranscriptsInUD[$sIDWithoutVersion])) {
+                                    if (isset($aTranscriptsInUD[$sIDWithoutVersion][$nVersion])) {
+                                        // Same version as what this LOVD is using, is available in the UD. Take it.
+                                        $aTranscriptsForLOVD[] = $aTranscriptsInUD[$sIDWithoutVersion][$nVersion];
+                                    } else {
+                                        // Pick the highest one from the UD.
+                                        $nMaxVersion = max(array_keys($aTranscriptsInUD[$sIDWithoutVersion]));
+                                        $aTranscriptsForLOVD[] = $aTranscriptsInUD[$sIDWithoutVersion][$nMaxVersion];
+                                    }
+                                }
+                                // Done, stop searching for transcripts.
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (!$aTranscriptsForLOVD) {
+                    // So that didn't work either... then... as a final resort, just grab the first transcript.
+                    $sIDWithoutVersion = key($aTranscriptsInUD);
+                    // We might have different versions here in this array. Pick the highest one.
+                    $nMaxVersion = max(array_keys($aTranscriptsInUD[$sIDWithoutVersion]));
+                    $aTranscriptsForLOVD[] = $aTranscriptsInUD[$sIDWithoutVersion][$nMaxVersion];
+                }
+            }
+        }
+    }
+
+    // It can happen here, that we do not have a transcript. This happens, when a certain list of transcripts has been
+    // requested, but the UD didn't contain any of the transcripts. That's OK, we'll leave it at this.
+    // If we do have transcripts to create, create them now.
+    foreach ($aTranscriptsForLOVD as $aTranscriptForLOVD) {
+        // First check if we don't already have this transcript.
+        list($sIDWithoutVersion, $nVersion) = explode('.', $aTranscriptForLOVD['id_ncbi']);
+        // This is a bit of a weird if(), but we didn't explode te list of versions yet.
+        if (isset($aTranscriptsInLOVD[$sIDWithoutVersion]) &&
+            in_array($nVersion, explode(';', $aTranscriptsInLOVD[$sIDWithoutVersion]))) {
+            continue;
+        }
+
+        $aTranscriptForLOVD['created_by'] = 0;
+        // Because there is significant time between creating two entries, I prefer to run date() again.
+        $aTranscriptForLOVD['created_date'] = date('Y-m-d H:i:s');
+        $qTranscripts->execute(array_values($aTranscriptForLOVD));
+        $nTranscriptsCreated ++;
+    }
 }
+
+// Closing stats.
+$nTimeSpent = microtime(true) - $tStart;
+print("\n" .
+    date('c') . "\n" .
+    'All done, completed ' . $nGenes . ' genes (' . round(100 * $nGenes / $nHGNCGenes) . '%) in ' . round($nTimeSpent, 1) . ' seconds (' . round($nTimeSpent/$nGenes, 2) . 's/gene).' . "\n" .
+    '    Requested ' . $nUDsRequested . ' UDs' . (!$nUDsRequested? '' : ', taking ' . round($nTimeSpentGettingUDs, 1) . ' seconds (' . round($nTimeSpentGettingUDs/$nUDsRequested, 2) . 's/UD)') . "\n" .
+    '    Requested transcript info for ' . $nTranscriptsRequested . ' UDs' . (!$nTranscriptsRequested? '' : ', taking ' . round($nTimeSpentGettingTranscripts, 1) . ' seconds (' . round($nTimeSpentGettingTranscripts/$nTranscriptsRequested, 2) . 's/UD)') . "\n" .
+    '    Created ' . $nGenesCreated . ' gene' . ($nGenes == 1? '' : 's') . ' and ' . $nTranscriptsCreated . ' transcript' . ($nTranscriptsCreated == 1? '' : 's') . "\n\n");
 ?>
