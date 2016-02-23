@@ -69,6 +69,7 @@ $_CONFIG = array(
         'update_hgnc' => 'n',
         'gene_list' => 'all',
         'transcript_list' => 'best',
+        'genes_to_ignore' => 'genes_to_ignore.txt',
     ),
     'hgnc_columns' => array(
         'gd_hgnc_id' => 'HGNC ID',
@@ -237,6 +238,8 @@ lovd_verifySettings('gene_list', 'File containing the gene symbols that you want
 lovd_verifySettings('transcript_list', 'File containing the transcripts that you want created,
     type \'all\' to have all transcripts created,
     or just press enter to let LOVD pick the best transcript per gene', 'file', array('all', 'best'));
+lovd_verifySettings('genes_to_ignore', 'File that we can read and write to,
+    containing gene symbols to ignore to speed up consecutive runs', 'file', '');
 
 
 
@@ -259,7 +262,7 @@ if (is_readable($_CONFIG['user']['gene_list'])) {
             $nLine ++;
             die('  Can not read gene list file on line ' . $nLine . ', not a valid gene symbol format.' . "\n");
         }
-        $aGenesToCreate[] = $sLine;
+        $aGenesToCreate[$sLine] = 1; // Using genes as keys speeds up the lookup process a lot.
     }
     print('  Read ' . count($aGenesToCreate) . ' genes to create.' . "\n");
 }
@@ -299,13 +302,16 @@ if (!file_exists($_CONFIG['hgnc_file']) || in_array($_CONFIG['user']['update_hgn
     if ($f === false) {
         die('  Could not create new HGNC data file.' . "\n");
     }
-    print('  Downloading HGNC data...');
+    print('  Downloading HGNC data... ');
     $sHGNCData = @file_get_contents($sURL);
     if (!$sHGNCData) {
-        die('  Could not download HGNC data. URL used:' . "\n  " . $sURL . "\n");
+        die('Failed.
+    Could not download HGNC data. URL used:
+      ' . $sURL . "\n");
     }
     if (!fputs($f, $sHGNCData)) {
-        die('  Could not write to HGNC data file.' . "\n");
+        die('Failed.
+    Could not write to HGNC data file.' . "\n");
     }
     print('OK!' . "\n");
 }
@@ -324,9 +330,122 @@ $_SERVER = array_merge($_SERVER, array(
     'QUERY_STRING' => '',
     'REQUEST_METHOD' => 'GET',
 ));
-// How do I kill PHP warnings coming from inc-init.php?
 // If I put a require here, I can't nicely handle errors, because PHP will die if something is wrong.
-error_reporting(0);
-ini_set('display_errors', 0);
+// However, I need to get rid of the "headers already sent" warnings from inc-init.php.
+// So, sadly if there is a problem connecting to LOVD, the script will die here without any output whatsoever.
+ini_set('display_errors', '0');
+ini_set('log_errors', '0'); // CLI logs errors to the screen, apparently.
 require ROOT_PATH . 'inc-init.php';
+
+
+
+// Start checking and reading out the HGNC file.
+print('  Reading HGNC data...' . "\n");
+
+$aHGNCFile = file($_CONFIG['hgnc_file'], FILE_IGNORE_NEW_LINES);
+if ($aHGNCFile === false) {
+    die('  Could not open the HGNC data file.' . "\n");
+} else {
+    print('  Checking file header... ');
+}
+
+// We need very selective info from the HGNC.
+// Check if all the columns we need are there, and check the order in which they appear.
+$aColumnsInFile = explode("\t", $aHGNCFile[0]);
+$aHGNCColumns = array(); // array(0 => 'gd_hgnc_id', 1 => 'gd_app_sym', ...);
+
+// Determine the correct keys for the columns we want.
+foreach ($aColumnsInFile as $nKey => $sName) {
+    if ($sCol = array_search($sName, $_CONFIG['hgnc_columns'])) {
+        // We need this column!
+        $aHGNCColumns[$nKey] = $sCol;
+    }
+}
+
+if (count($aHGNCColumns) < count($_CONFIG['hgnc_columns'])) {
+    // We didn't find all needed columns!
+    die('Failed.
+    Could not find all needed columns, please check the file\'s format,
+      or redownload the file.' . "\n");
+} else {
+    print('OK!
+    Retrieving additional resources... ');
+    unset($aHGNCFile[0]);
+}
+$nHGNCGenes = count($aHGNCFile);
+
+// Get list of LRGs and NGs to determine the genomic refseq of the genes.
+$aLRGFile = lovd_php_file('http://www.lovd.nl/mirrors/lrg/LRG_list.txt');
+unset($aLRGFile[0], $aLRGFile[1]);
+$aLRGs = array();
+foreach ($aLRGFile as $sLine) {
+    $aLine = explode("\t", $sLine);
+    $aLRGs[$aLine[1]] = $aLine[0];
+}
+$aNGFile = lovd_php_file('http://www.lovd.nl/mirrors/ncbi/NG_list.txt');
+unset($aNGFile[0], $aNGFile[1]);
+$aNGs = array();
+foreach ($aNGFile as $sLine) {
+    $aLine = explode("\t", $sLine);
+    $aNGs[$aLine[0]] = $aLine[1];
+}
+if (!count($aLRGs) || !count($aNGs)) {
+    die('Failed!
+    Could not retrieve LRG and NG resources.' . "\n");
+} else {
+    print('OK!
+    Resources stored, loading ignore list... ');
+}
+
+// See if we can file genes to ignore.
+$aGenesToIgnore = array();
+$bGenesToIgnoreIsEmpty = false; // If it's empty, we'll write an informative header.
+$bWroteToGenesFile = false; // The first gene we write there, will be a header with the current date.
+if (file_exists($_CONFIG['user']['genes_to_ignore'])) {
+    if (!is_readable($_CONFIG['user']['genes_to_ignore'])) {
+        die('present, but can not open the file.
+    Please check the permissions and try again.' . "\n");
+    } else {
+        $aFile = file($_CONFIG['user']['genes_to_ignore']);
+        if (!$aFile) {
+            $bGenesToIgnoreIsEmpty = true;
+        }
+        // Loop through the file to check it.
+        foreach ($aFile as $nLine => $sLine) {
+            $sLine = trim($sLine);
+            if (!$sLine || $sLine{0} == '#') {
+                continue;
+            }
+            $aGenesToIgnore[$sLine] = 1; // Using genes as keys speeds up the lookup process a lot.
+        }
+        print('OK!');
+    }
+} else {
+    print('None exists yet.');
+}
+print('  Preparing gene ignore list for appending... ');
+$fGenesToIgnore = fopen($_CONFIG['user']['genes_to_ignore'], 'a');
+if ($fGenesToIgnore === false) {
+    die('Failed!
+    Could not append to file, please check its permissions.' . "\n");
+} else {
+    print('OK!
+  Starting the run...' . "\n");
+}
+
+// Append header to $fGenesToIgnore, if empty.
+if ($bGenesToIgnoreIsEmpty) {
+    fputs($fGenesToIgnore,
+        '# These genes were ignored, because no reference sequence or transcripts could be found.' . "\r\n" .
+        '# Keeping this list speeds up the process a lot.' . "\r\n");
+}
+
+
+
+
+
+
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ?>
