@@ -6,7 +6,7 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-02-23
+ * Modified    : 2016-02-24
  * Version     : 0.1
  * For LOVD    : 3.0-15
  *
@@ -581,13 +581,16 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     }
 
     // UD... But we won't request it, if we already have it!
-    if (isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
+    if (!$bIgnoreGene && isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
         $aGene['refseq_UD'] = $aGenesInLOVD[$aLine['gd_app_sym']];
     } else {
         $aGene['refseq_UD'] = ''; // Gene not seen before, try and fetch.
     }
 
     if (!$bIgnoreGene && !$aGene['refseq_UD']) {
+        // We deliberately don't check if we already have the gene.
+        // If we have the gene, but it's not (or no longer) in the ignore list,
+        // we'll simply try again to get the UD. If that fails, the gene will get into the ignore list anyway.
         $t = microtime(true);
         $aGene['refseq_UD'] = lovd_getUDForGene($_CONF['refseq_build'], $aLine['gd_app_sym']);
         $nTimeSpentGettingUDs += (microtime(true) - $t);
