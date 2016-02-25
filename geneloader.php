@@ -6,8 +6,8 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-02-24
- * Version     : 0.1
+ * Modified    : 2016-02-26
+ * Version     : 0.2
  * For LOVD    : 3.0-15
  *
  * Purpose     : To help the user automatically load a large number of genes into LOVD3, together with the desired
@@ -42,7 +42,7 @@ if (isset($_SERVER['HTTP_HOST'])) {
 }
 
 $_CONFIG = array(
-    'version' => '0.1',
+    'version' => '0.2',
     'hgnc_file' => 'HGNC_download.txt',
     'hgnc_base_url' => 'http://www.genenames.org/cgi-bin/download',
     'hgnc_col_var_name' => 'col',
@@ -59,7 +59,8 @@ $_CONFIG = array(
         'immunoglobulin gene',    // From group "other", none of them work (verified).
         'region',                 // From group "other", none of them work (verified).
         'transposable element',   // From group "other", none of them work (verified).
-        'unknown',                // From group "other", none of them work (verified).
+        // LOVD actually allows this group since Jan 2015.
+        // 'unknown',                // From group "other", none of them work (verified).
         'virus integration site', // From group "other", none of them work (verified).
         'immunoglobulin pseudogene', // From group "pseudogene", none of them work (verified).
     ),
