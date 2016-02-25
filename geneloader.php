@@ -10,11 +10,22 @@
  * Version     : 0.2
  * For LOVD    : 3.0-15
  *
- * Purpose     : To help the user automatically load a large number of genes into LOVD3, together with the desired
- *               transcripts, and optionally, the diseases.
- *               This script retrieves the list of genes from the HGNC and creates an LOVD3 import file format with the
- *               gene and transcript information. It checks on LOVD.nl whether or not to use LRG, NG or NC. It also
- *               queries Mutalyzer for the reference transcript's information, and puts these in the file, too.
+ * Purpose     : To help the user automatically load a large number of genes
+ *               into LOVD3, together with the desired transcripts, and
+ *               optionally, the diseases (to be implemented).
+ *               This script retrieves the list of genes from the HGNC and
+ *               creates an LOVD3 import file format with the gene and
+ *               transcript information. It checks on LOVD.nl whether or not to
+ *               use LRG, NG or NC. It also queries Mutalyzer for the reference
+ *               transcript's information, and puts these in the file, too.
+ *
+ * Changelog   : 0.2b   2016-02-26
+ *               Genes in "bad" locus groups and types are no longer added to
+ *               the list of genes to ignore, because it's hard to remove them
+ *               later from it, and we're not getting a speed gain from putting
+ *               them in that list.
+ *               0.2    2016-02-26
+ *               Removed locus type "unknown" from the list of locus types to be ignored.
  *
  * Copyright   : 2004-2016 Leiden University Medical Center; http://www.LUMC.nl/
  * Programmer  : Ing. Ivo F.A.C. Fokkema <I.F.A.C.Fokkema@LUMC.nl>
@@ -553,11 +564,19 @@ foreach ($aHGNCFile as $nLine => $sLine) {
 
     // Ignore genes from the bad locus groups.
     if (in_array($aLine['gd_locus_group'], $_CONFIG['bad_locus_groups'])) {
-        $bIgnoreGene = true;
+        // Ignore them without logging them. Otherwise, it's very difficult to
+        // add those genes later if the list of locus groups changes, and we're
+        // not getting a speed optimization out of it, either.
+        // If you want these genes logged again, just set $bIgnoreGene to true.
+        continue;
     }
     // Ignore genes from the bad locus types.
     if (in_array($aLine['gd_locus_type'], $_CONFIG['bad_locus_types'])) {
-        $bIgnoreGene = true;
+        // Ignore them without logging them. Otherwise, it's very difficult to
+        // add those genes later if the list of locus types changes, and we're
+        // not getting a speed optimization out of it, either.
+        // If you want these genes logged again, just set $bIgnoreGene to true.
+        continue;
     }
 
     // Prepare chromosome fields.
