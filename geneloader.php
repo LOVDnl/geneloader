@@ -664,18 +664,17 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     } else {
         $aGene['refseq_UD'] = ''; // Gene not seen before, try and fetch.
     }
-print("\n" . 'Just before function');
+
     if (!$bIgnoreGene && !$aGene['refseq_UD']) {
         // We deliberately don't check if we already have the gene.
         // If we have the gene, but it's not (or no longer) in the ignore list,
         // we'll simply try again to get the UD. If that fails, the gene will get into the ignore list anyway.
         $t = microtime(true);
-        print("\n" . 'Within function ' . $_CONF['refseq_build'] . ' ' .  $aLine['gd_app_sym']);
         $aGene['refseq_UD'] = lovd_getUDForGene($_CONF['refseq_build'], $aLine['gd_app_sym']);
         $nTimeSpentGettingUDs += (microtime(true) - $t);
         $nUDsRequested ++;
     }
-    print("\n" . 'Just after function');
+
 
 
 
