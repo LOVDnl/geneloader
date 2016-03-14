@@ -82,6 +82,7 @@ $_CONFIG = array(
         'gene_list' => 'all',
         'transcript_list' => 'best',
         'genes_to_ignore' => 'genes_to_ignore.txt',
+        'omim_data' => 'morbidmap.txt',
     ),
     'hgnc_columns' => array(
         'gd_hgnc_id' => 'HGNC ID',
@@ -121,6 +122,12 @@ $_CONFIG = array(
         'position_g_mrna_end',
         'created_by',
         'created_date',
+    ),
+    'omim_columns' => array(
+        'phenotype' => 'Phenotype',
+        'genes' => 'Gene Symbols',
+        'mim' => 'MIM Number',
+        'cyto_location' => 'Cyto Location',
     ),
 );
 
@@ -255,7 +262,9 @@ lovd_verifySettings('transcript_list', 'File containing the transcripts that you
     or just press enter to let LOVD pick the best transcript per gene', 'file', array('all', 'best'));
 lovd_verifySettings('genes_to_ignore', 'File that we can read and write to,
     containing gene symbols to ignore to speed up consecutive runs', 'file', '');
-
+lovd_verifySettings('omim_data', 'File containing the OMIM phenotype data,
+    type \'n\' to not import OMIM data,
+    or just press enter to use the default', 'file', array('n'));
 
 
 
@@ -353,7 +362,7 @@ ini_set('log_errors', '0'); // CLI logs errors to the screen, apparently.
 require ROOT_PATH . 'inc-init.php';
 require ROOT_PATH . 'inc-lib-genes.php';   // For lovd_getUDForGene().
 require ROOT_PATH . 'inc-lib-actions.php'; // For lovd_addAllDefaultCustomColumns().
-
+ini_set('display_errors', '1');
 
 
 // Start checking and reading out the HGNC file.
@@ -385,23 +394,71 @@ if (count($aHGNCColumns) < count($_CONFIG['hgnc_columns'])) {
     Could not find all needed columns, please check the file\'s format,
       or redownload the file.' . "\n");
 } else {
-    print('OK!
-  Retrieving additional resources... ');
+    print('OK!' . "\n");
     unset($aHGNCFile[0]);
 }
 $nHGNCGenes = count($aHGNCFile);
 
+
+
+// Check if we can open the OMIM data file
+if ($_CONFIG['user']['omim_data'] != 'n') {
+
+    print('  Reading OMIM data...' . "\n");
+    $aOMIMColumns = array();
+    $aOMIMFile = file($_CONFIG['user']['omim_data'], FILE_IGNORE_NEW_LINES);
+    if ($aOMIMFile === false) {
+        die('  Could not open the OMIM data file.' . "\n");
+    } else {
+        print('  Checking OMIM file header... ');
+    }
+// Validate the OMIM file format is correct by finding the header and confirming it contains the required columns
+    foreach ($aOMIMFile as $nLine => $sLine) {
+        $sLine = trim($sLine);
+        if (!$sLine) {
+            continue;
+        } elseif ($sLine{0} == '#') {
+            // This is a comment line so search for the header
+            $sLine = substr($sLine, 2); // Removes "# " from the start of the line
+            $aOMIMHeader = explode("\t", $sLine);
+            if (count($aOMIMHeader) > 1) {
+                // We are assuming this is the column header line, check to see if it contains all the columns that we need
+                $aMissingOMIMCols = array_diff($_CONFIG['omim_columns'], $aOMIMHeader);
+                if (!$aMissingOMIMCols) {
+                    // All the columns have been found so continue
+                    print('OK!' . "\n");
+                    foreach ($aOMIMHeader as $nKey => $sName) {
+                        if ($sCol = array_search($sName, $_CONFIG['omim_columns'])) {
+                            // We need this column!
+                            $aOMIMColumns[$nKey] = $sCol;
+                        }
+                    }
+                    break;
+                } else {
+                    die('  The header line in the OMIM data file was found but it was missing required columns "' . implode('"," ', $aMissingOMIMCols) . '".' . "\n");
+                }
+            }
+        } else {
+            // We could not identify the header line so we can not continue
+            die('  Could not find the header line in the OMIM data file.' . "\n");
+        }
+    }
+}
+
+
+
+print('  Retrieving additional resources... ');
+$aLRGs = array();
+$aNGs = array();
 // Get list of LRGs and NGs to determine the genomic refseq of the genes.
 $aLRGFile = lovd_php_file('http://www.lovd.nl/mirrors/lrg/LRG_list.txt');
 unset($aLRGFile[0], $aLRGFile[1]);
-$aLRGs = array();
 foreach ($aLRGFile as $sLine) {
     $aLine = explode("\t", $sLine);
     $aLRGs[$aLine[1]] = $aLine[0];
 }
 $aNGFile = lovd_php_file('http://www.lovd.nl/mirrors/ncbi/NG_list.txt');
 unset($aNGFile[0], $aNGFile[1]);
-$aNGs = array();
 foreach ($aNGFile as $sLine) {
     $aLine = explode("\t", $sLine);
     $aNGs[$aLine[0]] = $aLine[1];
@@ -487,6 +544,7 @@ $nTimeSpentGettingTranscripts = 0;
 $nTranscriptsRequested = 0;
 $nGenesCreated = 0;
 $nTranscriptsCreated = 0;
+
 
 
 
@@ -606,16 +664,18 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     } else {
         $aGene['refseq_UD'] = ''; // Gene not seen before, try and fetch.
     }
-
+print("\n" . 'Just before function');
     if (!$bIgnoreGene && !$aGene['refseq_UD']) {
         // We deliberately don't check if we already have the gene.
         // If we have the gene, but it's not (or no longer) in the ignore list,
         // we'll simply try again to get the UD. If that fails, the gene will get into the ignore list anyway.
         $t = microtime(true);
+        print("\n" . 'Within function ' . $_CONF['refseq_build'] . ' ' .  $aLine['gd_app_sym']);
         $aGene['refseq_UD'] = lovd_getUDForGene($_CONF['refseq_build'], $aLine['gd_app_sym']);
         $nTimeSpentGettingUDs += (microtime(true) - $t);
         $nUDsRequested ++;
     }
+    print("\n" . 'Just after function');
 
 
 
@@ -794,13 +854,174 @@ foreach ($aHGNCFile as $nLine => $sLine) {
         $nTranscriptsCreated ++;
     }
 }
-
-// Closing stats.
+// Gene and transcript stats.
 $nTimeSpent = microtime(true) - $tStart;
 print("\n" .
     date('c') . "\n" .
-    'All done, completed ' . $nGenes . ' genes (' . round(100 * $nGenes / $nHGNCGenes) . '%) in ' . round($nTimeSpent, 1) . ' seconds (' . round($nTimeSpent/$nGenes, 2) . 's/gene).' . "\n" .
+    'Genes and transcripts done, completed ' . $nGenes . ' genes (' . round(100 * $nGenes / $nHGNCGenes) . '%) in ' . round($nTimeSpent, 1) . ' seconds (' . round($nTimeSpent/$nGenes, 2) . 's/gene).' . "\n" .
     '    Requested ' . $nUDsRequested . ' UDs' . (!$nUDsRequested? '' : ', taking ' . round($nTimeSpentGettingUDs, 1) . ' seconds (' . round($nTimeSpentGettingUDs/$nUDsRequested, 2) . 's/UD)') . "\n" .
     '    Requested transcript info for ' . $nTranscriptsRequested . ' UDs' . (!$nTranscriptsRequested? '' : ', taking ' . round($nTimeSpentGettingTranscripts, 1) . ' seconds (' . round($nTimeSpentGettingTranscripts/$nTranscriptsRequested, 2) . 's/UD)') . "\n" .
     '    Created ' . $nGenesCreated . ' gene' . ($nGenes == 1? '' : 's') . ' and ' . $nTranscriptsCreated . ' transcript' . ($nTranscriptsCreated == 1? '' : 's') . "\n\n");
+
+
+
+
+
+// Process the OMIM data
+if ($_CONFIG['user']['omim_data'] != 'n') {
+    print('  Processing OMIM data...');
+
+    $sql = $_DB->query('SELECT id, chromosome, id_omim  FROM ' . TABLE_GENES);
+    $aDBGenes = array_map('reset', $sql->fetchAll(PDO::FETCH_GROUP | PDO::FETCH_ASSOC));
+
+    $sql = $_DB->query('SELECT id_omim, id, chromosome FROM ' . TABLE_GENES . ' WHERE id_omim');
+    $aDBOMIM = array_map('reset', $sql->fetchAll(PDO::FETCH_GROUP | PDO::FETCH_ASSOC));
+
+    // Put any characters that need to be removed from the phenotype name into this array
+    $aRemoveChars = array(' (1)', ' (2)', ' (3)', ' (4)', '}', '{', '?', '[', ']');
+    $aInsertData = array();
+
+    foreach ($aOMIMFile as $nKey => $sLine) {
+
+        $aData = array();
+        $aData['error'] = false;
+
+        $sLine = trim($sLine);
+        // Detect comment or empty lines and skip
+        if (!$sLine || substr($sLine, 0, 1) == '#') {
+            continue;
+        }
+
+        // Create an array from the line and rename the array keys
+        $aLineExplode = explode("\t", $sLine);
+        $aLine = array();
+        foreach ($aOMIMColumns as $nKey => $sName) {
+            $aLine[$sName] = $aLineExplode[$nKey];
+        }
+
+        $aData['gene_id_omim'] = $aLine['mim'];
+        $aData['genes'] = explode(', ', $aLine['genes']);
+
+        // Sometimes the chromosome is formatted as Chr.11 and other times it is formatted as 11q13.32
+        if (substr($aLine['cyto_location'], 0, 3) == 'Chr') {
+            preg_match('/(\d+|X|Y)$/', $aLine['cyto_location'], $aRegs);
+        } else {
+            preg_match('/^(\d+|X|Y)\w/', $aLine['cyto_location'], $aRegs);
+        }
+
+        // Check to see if we were able to find a chromosome
+        if (empty($aRegs[1])) {
+            $aData['error'] = true;
+            $aData['chr'] = null;
+        } else {
+            $aData['chr'] = $aRegs[1];
+        }
+
+        // Process the phenotype text and remove unwanted characters
+        $aData['phenotype'] = str_replace($aRemoveChars, '', preg_replace('/, \d{6}+/', '', $aLine['phenotype']));
+
+        // Find the phenotype OMIM ID
+        preg_match('/ (\d{6}) /', $aLine['phenotype'], $aRegs);
+        if (empty($aRegs[1])) {
+            // If we can not locate an OMIM ID for the phenotype then we can not insert it into the DB
+            $aData['error'] = true;
+            $aData['phenotype_id_omim'] = null;
+        } else {
+            $aData['phenotype_id_omim'] = $aRegs[1];
+        }
+
+        // First try to see if there is an exact match with the OMIM ID, chromosome and gene symbol
+        if (!empty($aDBOMIM[$aData['gene_id_omim']]) && in_array($aDBOMIM[$aData['gene_id_omim']]['id'], $aData['genes']) && $aDBOMIM[$aData['gene_id_omim']]['chromosome'] == $aData['chr']) {
+            $aData['db_gene'] = $aDBOMIM[$aData['gene_id_omim']]['id'];
+        } else {
+            // Loop through the gene symbols to see if we find a match in the database
+            foreach ($aData['genes'] as $nKey => $sGene) {
+                if (!empty($aDBGenes[$sGene]) && $aDBGenes[$sGene]['chromosome'] == $aData['chr']) {
+                    $aData['db_gene'] = $sGene;
+                }
+            }
+        }
+
+        if (!isset($aData['db_gene'])) {
+            // We can not find a gene in the DB for this phenotype so ignore it
+            $aData['error'] = true;
+        }
+
+        if (!$aData['error']) {
+            // If we have not found an error then add this phenotype to the data to be inserted
+            if (empty($aInsertData[$aData['phenotype_id_omim']])) {
+                $aInsertData[$aData['phenotype_id_omim']] = array('phenotype' => $aData['phenotype'], 'genes' => array($aData['db_gene']));
+            } else {
+
+                // Check if the name of the phenotype is shorter than the existing name and if so then use it
+                if (strlen($aData['phenotype']) < strlen($aInsertData[$aData['phenotype_id_omim']]['phenotype'])) {
+                    $aInsertData[$aData['phenotype_id_omim']]['phenotype'] = $aData['phenotype'];
+                }
+
+                // Check if this gene has already been added and if not then add it
+                if (!in_array($aData['db_gene'], $aInsertData[$aData['phenotype_id_omim']]['genes'])) {
+                    $aInsertData[$aData['phenotype_id_omim']]['genes'][] = $aData['db_gene'];
+                }
+            }
+        }
+    }
+
+    // $aInsertData should now contain unique phenotype with their own OMIM IDs as well as Unique genes associated with them.
+    // Load up the existing disease and gen2dis tables in the DB
+    $aDiseasesInLOVD = $_DB->query('SELECT `id_omim`, `id` FROM ' . TABLE_DISEASES . ' WHERE id_omim IS NOT NULL ')->fetchAllCombine();
+    $aGen2DisInLOVD = $_DB->query('SELECT CONCAT(geneid, diseaseid), NULL FROM ' . TABLE_GEN2DIS)->fetchAllCombine();
+
+
+    $qDiseases = $_DB->prepare('INSERT INTO ' . TABLE_DISEASES . '(`name`,`id_omim`,`created_by`,`created_date`) VALUES (?,?,?,?)');
+    $qGen2Dis = $_DB->prepare('INSERT INTO ' . TABLE_GEN2DIS . '(`geneid`,`diseaseid`) VALUES (?,?)');
+
+    $aDiseaseForLOVD = array();
+    $aGen2DisForLOVE = array();
+    $nDiseasesCreated = 0;
+    $nGen2DisCreated = 0;
+    $nLoopCount = 0;
+
+    print(' OK!
+  Importing OMIM data');
+
+    // Loop through each of these $aInsertData records
+    foreach ($aInsertData as $nOMIMID => $OMIMEntry) {
+        if (($nLoopCount % 200) == 0) {
+            print('.');
+            flush();
+        }
+        // Check to see if the phenotype already exists within the DB, if so then get the id and continue otherwise insert and return the new id
+        if (isset($aDiseasesInLOVD[$nOMIMID])) {
+            $nID = $aDiseasesInLOVD[$nOMIMID];
+        } else {
+            // Setup the disease data to insert
+            $aDiseaseForLOVD = array(
+                'name' => $OMIMEntry['phenotype'],
+                'id_omim' => $nOMIMID,
+                'created_by' => 0,
+                'created_date' => date('Y-m-d H:i:s'),
+            );
+            // Insert the new disease and return the new disease ID
+            $qDiseases->execute(array_values($aDiseaseForLOVD));
+            $nID = $_DB->lastInsertId();
+            $nDiseasesCreated++;
+        }
+
+        // Loop through each of the genes and check to see if it is already in the DB, if so then ignore otherwise insert
+        foreach ($OMIMEntry['genes'] as $nKey => $sGene) {
+            if (!array_key_exists($sGene . $nID, $aGen2DisInLOVD)) {
+                $aGen2DisForLOVE = array(
+                    'geneid' => $sGene,
+                    'diseaseid' => $nID,
+                );
+                $qGen2Dis->execute(array_values($aGen2DisForLOVE));
+                $nGen2DisCreated++;
+            }
+        }
+        $nLoopCount++;
+    }
+
+    print(' OK!' . "\n\n" . 'OMIM phenotypes done, processed ' . count($aOMIMFile) . ' lines in the OMIM file, inserted ' . $nDiseasesCreated . ' new diseases and added ' . $nGen2DisCreated . ' links from genes to diseases.');
+    print("\n" . date('c') . "\n\n" . 'All Done.' . "\n\n");
+}
 ?>
