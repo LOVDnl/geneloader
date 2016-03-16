@@ -463,7 +463,7 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
     You can download this file from the OMIM website:
       http://www.omim.org/downloads
     If you\'re sure this is the correct file, apparently the file
-      format changed. please report this as a bug here:
+      format changed. Please report this as a bug here:
       https://github.com/LOVDnl/geneloader/issues
       and include the file header so we can handle new file formats.' . "\n");
                 }
@@ -1004,7 +1004,7 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
     // $aInsertData should now contain unique diseases with their own OMIM IDs and unique genes associated with them.
     // Load up the existing disease and gen2dis tables in the DB.
     $aDiseasesInLOVD = $_DB->query('SELECT id_omim, id FROM ' . TABLE_DISEASES . ' WHERE id_omim IS NOT NULL')->fetchAllCombine();
-    $aGen2DisInLOVD = $_DB->query('SELECT CONCAT(geneid, diseaseid), NULL FROM ' . TABLE_GEN2DIS)->fetchAllCombine();
+    $aGen2DisInLOVD = $_DB->query('SELECT CONCAT(geneid, diseaseid), 1 FROM ' . TABLE_GEN2DIS)->fetchAllCombine();
 
     // Prepare the insert statements.
     $qDiseases = $_DB->prepare('INSERT INTO ' . TABLE_DISEASES . ' (name, id_omim, created_by, created_date) VALUES (?, ?, ?, ?)');
@@ -1020,7 +1020,7 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
   Importing OMIM data');
 
     // Loop through each of these $aInsertData records.
-    $nDiseasesPerDot = floor($nDotsPerLine / count($aInsertData));
+    $nDiseasesPerDot = floor(count($aInsertData) / $nDotsPerLine);
     foreach ($aInsertData as $nOMIMID => $OMIMEntry) {
         $nLoopCount ++;
         // Control when to show a progress dot.
