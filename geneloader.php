@@ -6,8 +6,8 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-03-15
- * Version     : 0.3
+ * Modified    : 2016-05-12
+ * Version     : 0.4
  * For LOVD    : 3.0-15
  *
  * Purpose     : To help the user automatically load a large number of genes
@@ -19,7 +19,13 @@
  *               use LRG, NG or NC. It also queries Mutalyzer for the reference
  *               transcript's information, and puts these in the file, too.
  *
- * Changelog   : 0.3    2016-03-15
+ * Changelog   : 0.4    2016-05-12
+ *               Fixed bug; The chromosome band was not stored in the database.
+ *               Closes #2.
+ *               Fixed bug; The OMIM field was set to 0 when not filled in,
+ *               instead of NULL.
+ *               Closes #3.
+ *               0.3    2016-03-15
  *               Added the option to import OMIM disease data.
  *               0.2b   2016-02-26
  *               Genes in "bad" locus groups and types are no longer added to
@@ -674,10 +680,10 @@ foreach ($aHGNCFile as $nLine => $sLine) {
     // Prepare chromosome fields.
     if ($aLine['gd_pub_chrom_map'] == 'mitochondria') {
         $aGene['chromosome'] = 'M';
-        $sChromBand = '';
+        $aGene['chrom_band'] = '';
     } elseif (preg_match('/^(\d{1,2}|[XY])(.*)$/', $aLine['gd_pub_chrom_map'], $aMatches)) {
         $aGene['chromosome'] = $aMatches[1];
-        $sChromBand = $aMatches[2];
+        $aGene['chrom_band'] = $aMatches[2];
     } else {
         // Silently ignore genes on weird chromosomes.
         continue;
@@ -764,6 +770,12 @@ foreach ($aHGNCFile as $nLine => $sLine) {
         foreach ($_CONFIG['lovd_gene_columns'] as $sCol => $sHGNCCol) {
             if ($sHGNCCol) {
                 $aGene[$sCol] = $aLine[$sHGNCCol];
+            }
+        }
+        // Set numeric columns to NULL if not given.
+        foreach (array('id_hgnc', 'id_entrez', 'id_omim') as $sKey) {
+            if (!$aGene[$sKey]) {
+                $aGene[$sKey] = NULL;
             }
         }
         $aGene['created_by'] = 0;
