@@ -6,18 +6,20 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-05-12
+ * Modified    : 2016-05-27
  * Version     : 0.4
  * For LOVD    : 3.0-15
  *
  * Purpose     : To help the user automatically load a large number of genes
  *               into LOVD3, together with the desired transcripts, and
- *               optionally, the diseases (to be implemented).
+ *               optionally, the diseases.
  *               This script retrieves the list of genes from the HGNC and
  *               creates an LOVD3 import file format with the gene and
  *               transcript information. It checks on LOVD.nl whether or not to
  *               use LRG, NG or NC. It also queries Mutalyzer for the reference
  *               transcript's information, and puts these in the file, too.
+ *               The optional disease information is taken from a file that the
+ *               user needs to download from OMIM.
  *
  * Changelog   : 0.4    2016-05-12
  *               Fixed bug; The chromosome band was not stored in the database.
@@ -33,10 +35,11 @@
  *               later from it, and we're not getting a speed gain from putting
  *               them in that list.
  *               0.2    2016-02-26
- *               Removed locus type "unknown" from the list of locus types to be ignored.
+ *               Removed locus type "unknown" from the list of locus types to be
+ *               ignored.
  *
  * Copyright   : 2004-2016 Leiden University Medical Center; http://www.LUMC.nl/
- * Programmer  : Ing. Ivo F.A.C. Fokkema <I.F.A.C.Fokkema@LUMC.nl>
+ * Programmers : Ing. Ivo F.A.C. Fokkema <I.F.A.C.Fokkema@LUMC.nl>
  *               Anthony Marty <anthony.marty@unimelb.edu.au>
  *
  *
@@ -57,15 +60,12 @@
  *
  *************/
 
-// FIXME: Chromosome band is not getting imported.
-// FIXME: OMIM ID is being set to 0 when empty.
-
 if (isset($_SERVER['HTTP_HOST'])) {
     die('Please run this script through the command line.' . "\n");
 }
 
 $_CONFIG = array(
-    'version' => '0.3',
+    'version' => '0.4',
     'hgnc_file' => 'HGNC_download.txt',
     'hgnc_base_url' => 'http://www.genenames.org/cgi-bin/download',
     'hgnc_col_var_name' => 'col',
@@ -176,6 +176,7 @@ function lovd_verifySettings ($sKeyName, $sMessage, $sVerifyType, $options)
 
     while (true) {
         print('  ' . $sMessage .
+            ($sVerifyType != 'int' || ($aRange === array('', ''))? '' : ' (' . (int) $aRange[0] . '-' . $aRange[1] . ')') .
             (empty($_CONFIG['user'][$sKeyName])? '' : ' [' . $_CONFIG['user'][$sKeyName] . ']') . ' : ');
         $sInput = trim(fgets(STDIN));
         if (!strlen($sInput) && !empty($_CONFIG['user'][$sKeyName])) {
@@ -201,7 +202,12 @@ function lovd_verifySettings ($sKeyName, $sMessage, $sVerifyType, $options)
                 if ($aRange[1] !== '' && $sInput > $aRange[1]) {
                     break;
                 }
-                $_SETT[$sKeyName] = $sInput;
+                $_CONFIG['user'][$sKeyName] = $sInput;
+                return true;
+
+            case 'string':
+                $sInput = $sInput;
+                $_CONFIG['user'][$sKeyName] = $sInput;
                 return true;
 
             case 'file':
