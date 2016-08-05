@@ -6,9 +6,9 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-05-27
- * Version     : 0.4
- * For LOVD    : 3.0-15
+ * Modified    : 2016-08-05
+ * Version     : 0.5
+ * For LOVD    : 3.0-16
  *
  * Purpose     : To help the user automatically load a large number of genes
  *               into LOVD3, together with the desired transcripts, and
@@ -21,7 +21,10 @@
  *               The optional disease information is taken from a file that the
  *               user needs to download from OMIM.
  *
- * Changelog   : 0.4    2016-05-12
+ * Changelog   : 0.5    2016-08-05
+ *               Fixed bug; Single-letter gene "T" was not fully supported.
+ *               Closes #4.
+ *               0.4    2016-05-12
  *               Fixed bug; The chromosome band was not stored in the database.
  *               Closes #2.
  *               Fixed bug; The OMIM field was set to 0 when not filled in,
@@ -65,7 +68,7 @@ if (isset($_SERVER['HTTP_HOST'])) {
 }
 
 $_CONFIG = array(
-    'version' => '0.4',
+    'version' => '0.5',
     'hgnc_file' => 'HGNC_download.txt',
     'hgnc_base_url' => 'http://www.genenames.org/cgi-bin/download',
     'hgnc_col_var_name' => 'col',
@@ -302,7 +305,7 @@ if (is_readable($_CONFIG['user']['gene_list'])) {
         if (!$sLine || $sLine{0} == '#') {
             continue;
         }
-        if (!preg_match('/^[A-Z][A-Za-z0-9_@-]+$/', $sLine)) {
+        if (!preg_match('/^[A-Z][A-Za-z0-9_@-]*$/', $sLine)) {
             $nLine ++;
             die('  Can not read gene list file on line ' . $nLine . ', not a valid gene symbol format.' . "\n");
         }
