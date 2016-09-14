@@ -6,9 +6,9 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-08-05
- * Version     : 0.5
- * For LOVD    : 3.0-16
+ * Modified    : 2016-09-14
+ * Version     : 0.6
+ * For LOVD    : 3.0-17
  *
  * Purpose     : To help the user automatically load a large number of genes
  *               into LOVD3, together with the desired transcripts, and
@@ -21,7 +21,10 @@
  *               The optional disease information is taken from a file that the
  *               user needs to download from OMIM.
  *
- * Changelog   : 0.5    2016-08-05
+ * Changelog   : 0.6    2016-09-14
+ *               HGNC can return multiple OMIM IDs, don't try to insert them
+ *               all.
+ *               0.5    2016-08-05
  *               Fixed bug; Single-letter gene "T" was not fully supported.
  *               Closes #4.
  *               0.4    2016-05-12
@@ -68,7 +71,7 @@ if (isset($_SERVER['HTTP_HOST'])) {
 }
 
 $_CONFIG = array(
-    'version' => '0.5',
+    'version' => '0.6',
     'hgnc_file' => 'HGNC_download.txt',
     'hgnc_base_url' => 'http://www.genenames.org/cgi-bin/download',
     'hgnc_col_var_name' => 'col',
@@ -785,6 +788,10 @@ foreach ($aHGNCFile as $nLine => $sLine) {
         foreach (array('id_hgnc', 'id_entrez', 'id_omim') as $sKey) {
             if (!$aGene[$sKey]) {
                 $aGene[$sKey] = NULL;
+            } elseif (preg_match('/^(\d+), /', $aGene[$sKey], $aRegs)) {
+                // 2016-09-14; 3.0-17; HGNC can return multiple OMIM IDs.
+                // Just trim the other(s) off.
+                $aGene[$sKey] = $aRegs[1];
             }
         }
         $aGene['created_by'] = 0;
