@@ -953,17 +953,12 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
             $aLine[$sName] = $aLineExplode[$nKey];
         }
 
-
-
         // Process the disease text and remove unwanted characters.
-
-        // Multiple phenotypes in one column, try to import all of them where the OMIM ID does not already exist
+        // Multiple phenotypes in one column separated by semicolon, we want to import all of them if the OMIM ID does not already exist
         $aDiseaseNames = explode('; ', $aLine['disease']);
         foreach ($aDiseaseNames as $sDiseaseName) {
-            $aData['disease'] = $sDiseaseName; // simply take the first description
-            //        $aData['disease'] = $aLine['disease'];
-            // Take phenotype mapping number off.
-            $aData['disease'] = preg_replace('/\s*\(\d\)$/', '', $aData['disease']);
+            $aData['disease'] = $sDiseaseName;
+
             // Isolate OMIM ID.
             $aData['disease_id_omim'] = null;
 
@@ -983,7 +978,6 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
                 }
             }
 
-            //        if (preg_match('/,? (\d{6})/', $aData['disease'], $aRegs)) {
             if ($nIndexOmimId !== false) {
                 // Combining all the non OMIM ID parts of the phenotypes column
                 $aData['disease'] = implode(', ', $aNameParts);
@@ -1019,6 +1013,8 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
                 // Otherwise, loop through the gene symbols to see if we find a match in the database
                 //  just on symbol instead of the OMIM ID.
                 foreach ($aData['genes'] as $sGene) {
+                    // "Gene symbols" column has multiple symbols. But, we only need one that is found in our database.
+                    // "Approved Symbol" column has only 1 symbol, but it is not necessarily the one in our database.
                     if (!empty($aGenesInDBWithoutOMIM[$sGene]) && $aGenesInDBWithoutOMIM[$sGene] == $aData['chr']) {
                         $aData['db_gene'] = $sGene;
                     }
@@ -1041,6 +1037,7 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
                     $aInsertData[$aData['disease_id_omim']]['disease'] = $aData['disease'];
                 }
                 // Check if this gene has already been added and if not then add it
+                // Here, we are appending gene symbols from the same OMIM ID, but different row of the OMIM file.
                 if (!in_array($aData['db_gene'], $aInsertData[$aData['disease_id_omim']]['genes'])) {
                     $aInsertData[$aData['disease_id_omim']]['genes'][] = $aData['db_gene'];
                 }
