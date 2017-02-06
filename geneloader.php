@@ -95,10 +95,10 @@ $_CONFIG = array(
     ),
     'user' => array(
         // Variables we will be asking the user.
-        'lovd_path' => '/Users/juny/projects/LOVD_plus/src',
+        'lovd_path' => '',
         'update_hgnc' => 'n',
         'gene_list' => 'all',
-        'transcript_list' => 'all',
+        'transcript_list' => 'best',
         'genes_to_ignore' => 'genes_to_ignore.txt',
         'omim_data' => 'genemap2.txt',
     ),
