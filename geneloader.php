@@ -937,6 +937,23 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
     $aOMIMIDsInDB = $_DB->query('SELECT id_omim, id, chromosome FROM ' . TABLE_GENES . ' WHERE id_omim IS NOT NULL')->fetchAllGroupAssoc();
     $aInsertData = array();
 
+    $aInheritanceMap = array(
+        'autosomal dominant' => 'AD',
+        'isolated cases' => 'IC',
+        'multifactorial' => 'Mu',
+        'autosomal recessive' => 'AR',
+        'digenic recessive' => 'DR',
+        'digenic dominant' => 'DD',
+        'somatic mutation' => 'SMu',
+        'x-linked dominant' => 'XLD',
+        'mitochondrial' => 'Mi',
+        'somatic mosaicism' => 'SMo',
+        'x-linked recessive' => 'XLR',
+        'inherited chromosomal imbalance' => 'ICB',
+        'x-linked' => 'XL',
+        'y-linked' => 'YL'
+    );
+
     foreach ($aOMIMFile as $sLine) {
         $aData = array();
 
@@ -950,13 +967,19 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
         $aLineExplode = explode("\t", $sLine);
         $aLine = array();
         foreach ($aOMIMColumns as $nKey => $sName) {
-            $aLine[$sName] = $aLineExplode[$nKey];
+            if (!isset($aLineExplode[$nKey])) {
+                $aLine[$sName] = '';
+            } else {
+                $aLine[$sName] = $aLineExplode[$nKey];
+            }
+
         }
 
         // Process the disease text and remove unwanted characters.
         // Multiple phenotypes in one column separated by semicolon, we want to import all of them if the OMIM ID does not already exist
         $aDiseaseNames = explode('; ', $aLine['disease']);
         foreach ($aDiseaseNames as $sDiseaseName) {
+            $aData['inheritance'] = array();
             $aData['disease'] = $sDiseaseName;
 
             // Isolate OMIM ID.
@@ -979,8 +1002,19 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
             }
 
             if ($nIndexOmimId !== false) {
-                // Combining all the non OMIM ID parts of the phenotypes column
-                $aData['disease'] = implode(', ', $aNameParts);
+                // Parts before the OMIM ID is disease name.
+                $aData['disease'] = implode(', ', array_slice($aNameParts, 0, $nIndexOmimId));
+
+                // Parts after the OMIM ID is inheritance.
+                $aInheritances = array_slice($aNameParts, $nIndexOmimId);
+                foreach ($aInheritances as $sInheritance) {
+                    $sInheritance = strtolower($sInheritance);
+                    if (!empty($aInheritanceMap[$sInheritance])) {
+                        $aData['inheritance'][] = $aInheritanceMap[$sInheritance];
+                    } else {
+                        $aData['inheritance'][] = $sInheritance;
+                    }
+                }
             } else {
                 // Entry doesn't have disease OMIM ID.
                 // These entries are problematic with other things as well (such as chromosome). Drop them.
@@ -1029,7 +1063,7 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
             // If we're still here, then add this disease to the data to be inserted.
             if (!isset($aInsertData[$aData['disease_id_omim']])) {
                 // This is the first time we have seen this disease so create a new entry for it and assign the gene.
-                $aInsertData[$aData['disease_id_omim']] = array('disease' => $aData['disease'], 'genes' => array($aData['db_gene']));
+                $aInsertData[$aData['disease_id_omim']] = array('disease' => $aData['disease'], 'genes' => array($aData['db_gene']), 'inheritance' => $aData['inheritance']);
             } else {
                 // We have seen this disease previously.
                 // Check if the name of the disease is shorter than the existing name, and if so, then use this one.
@@ -1040,6 +1074,10 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
                 // Here, we are appending gene symbols from the same OMIM ID, but different row of the OMIM file.
                 if (!in_array($aData['db_gene'], $aInsertData[$aData['disease_id_omim']]['genes'])) {
                     $aInsertData[$aData['disease_id_omim']]['genes'][] = $aData['db_gene'];
+                }
+
+                if (!empty($aInsertData[$aData['disease_id_omim']]['inheritance'])) {
+                    $aInsertData[$aData['disease_id_omim']]['inheritance'] = array_unique(array_merge($aInsertData[$aData['disease_id_omim']]['inheritance'], $aData['inheritance']));
                 }
             }
         } // end of disease name foreach
@@ -1053,7 +1091,7 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
     $aGen2DisInLOVD = $_DB->query('SELECT CONCAT(geneid, diseaseid), 1 FROM ' . TABLE_GEN2DIS)->fetchAllCombine();
 
     // Prepare the insert statements.
-    $qDiseases = $_DB->prepare('INSERT INTO ' . TABLE_DISEASES . ' (name, id_omim, created_by, created_date) VALUES (?, ?, ?, ?)');
+    $qDiseases = $_DB->prepare('INSERT INTO ' . TABLE_DISEASES . ' (name, inheritance, id_omim, created_by, created_date) VALUES (?, ?, ?, ?, ?)');
     $qGen2Dis = $_DB->prepare('INSERT INTO ' . TABLE_GEN2DIS . ' (geneid, diseaseid) VALUES (?, ?)');
     // The diseases will be done so quickly, let's not re-run this all the time.
     $sCreatedDate = date('Y-m-d H:i:s');
@@ -1061,7 +1099,6 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
     $nDiseasesCreated = 0;
     $nGen2DisCreated = 0;
     $nLoopCount = 0;
-
     print(' OK!
   Importing OMIM data');
 
@@ -1083,11 +1120,13 @@ if ($_CONFIG['user']['omim_data'] != 'n') {
             // Setup the disease data to insert.
             $aSQL = array(
                 'name' => $OMIMEntry['disease'],
+                'inheritance' => implode(';', $OMIMEntry['inheritance']),
                 'id_omim' => $nOMIMID,
                 'created_by' => 0,
                 'created_date' => $sCreatedDate,
             );
             // Insert the new disease and return the new disease ID.
+
             $qDiseases->execute(array_values($aSQL));
             $nID = $_DB->lastInsertId();
             $nDiseasesCreated ++;
