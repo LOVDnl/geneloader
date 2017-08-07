@@ -6,9 +6,9 @@
  *
  * (based on load_HGNC_data.php, created 2013-02-13, last modified 2015-10-08)
  * Created     : 2016-02-22
- * Modified    : 2016-09-14
- * Version     : 0.6
- * For LOVD    : 3.0-17
+ * Modified    : 2017-08-07
+ * Version     : 0.7
+ * For LOVD    : 3.0-19
  *
  * Purpose     : To help the user automatically load a large number of genes
  *               into LOVD3, together with the desired transcripts, and
@@ -21,7 +21,10 @@
  *               The optional disease information is taken from a file that the
  *               user needs to download from OMIM.
  *
- * Changelog   : 0.6    2016-09-14
+ * Changelog   : 0.7    2017-08-07
+ *               Fixed bug; LOVDs that force access through SSL, were blocking
+ *               the Gene Loader.
+ *               0.6    2016-09-14
  *               HGNC can return multiple OMIM IDs, don't try to insert them
  *               all.
  *               0.5    2016-08-05
@@ -385,6 +388,10 @@ $_SERVER = array_merge($_SERVER, array(
 // So, sadly if there is a problem connecting to LOVD, the script will die here without any output whatsoever.
 ini_set('display_errors', '0');
 ini_set('log_errors', '0'); // CLI logs errors to the screen, apparently.
+// Let the LOVD believe we're accessing it through SSL. LOVDs that demand this, will otherwise block us.
+// We have error messages surpressed anyway, as the LOVD in question will complain when it tries to define "SSL" as well.
+// Fixes #7: "GeneLoader doesn't work on LOVDs that force SSL access only".
+define('SSL', true);
 require ROOT_PATH . 'inc-init.php';
 require ROOT_PATH . 'inc-lib-genes.php';   // For lovd_getUDForGene().
 require ROOT_PATH . 'inc-lib-actions.php'; // For lovd_addAllDefaultCustomColumns().
