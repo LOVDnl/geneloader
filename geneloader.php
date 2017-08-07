@@ -24,6 +24,8 @@
  * Changelog   : 0.7    2017-08-07
  *               Fixed bug; LOVDs that force access through SSL, were blocking
  *               the Gene Loader.
+ *               Fixed bug; When LOVD's name of a gene mismatched what the HGNC
+ *               had, new transcripts didn't get their name shortened.
  *               0.6    2016-09-14
  *               HGNC can return multiple OMIM IDs, don't try to insert them
  *               all.
@@ -577,7 +579,7 @@ if ($bGenesToIgnoreIsEmpty) {
 
 
 // Prepare for running queries.
-$aGenesInLOVD = $_DB->query('SELECT id, refseq_UD FROM ' . TABLE_GENES)->fetchAllCombine();
+$aGenesInLOVD = $_DB->query('SELECT id, name, refseq_UD FROM ' . TABLE_GENES)->fetchAllGroupAssoc();
 $sSQL = 'INSERT INTO ' . TABLE_GENES . ' (';
 foreach (array_keys($_CONFIG['lovd_gene_columns']) as $nKey => $sField) {
     $sSQL .= (!$nKey? '' : ', ') . '`' . $sField . '`';
@@ -719,7 +721,7 @@ foreach ($aHGNCFile as $nLine => $sLine) {
 
     // UD... But we won't request it, if we already have it!
     if (!$bIgnoreGene && isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
-        $aGene['refseq_UD'] = $aGenesInLOVD[$aLine['gd_app_sym']];
+        $aGene['refseq_UD'] = $aGenesInLOVD[$aLine['gd_app_sym']]['refseq_UD'];
     } else {
         $aGene['refseq_UD'] = ''; // Gene not seen before, try and fetch.
     }
@@ -750,6 +752,14 @@ foreach ($aHGNCFile as $nLine => $sLine) {
                 if ($aAvailableTranscript['id']) { // Is this check needed? Copied from genes.php.
                     list($sIDWithoutVersion, $nVersion) = explode('.', $aAvailableTranscript['id']);
                     // We create a nested array like this, because possibly, we'll see two versions of one transcript.
+
+                    // When the HGNC's name of a gene mismatches with LOVD's name of a gene, the transcript names aren't shortened.
+                    // Shortening using the HGNC name is done when building the array. If gene is in LOVD, use that name first.
+                    // Fixes #9: "The GeneLoader is not shortening transcript names like LOVD3 does".
+                    if (isset($aGenesInLOVD[$aLine['gd_app_sym']])) {
+                        $aAvailableTranscript['product'] = str_replace($aGenesInLOVD[$aLine['gd_app_sym']]['name'] . ', ', '', $aAvailableTranscript['product']);
+                    }
+                    // As a fallback, use the name we got from the HGNC, which is done when building the array.
 
                     $aTranscriptsInUD[$sIDWithoutVersion][$nVersion] =
                         array(
